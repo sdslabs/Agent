@@ -1,0 +1,132 @@
+class UPS{
+
+#Setup_Const
+	var port  #port at which it should listen
+	var log_file  #location of log file
+
+#Constants
+	var(percentage) marginal_charge  #we wouldn't let charge go to 0. instead a margin would be kept.
+	var(rate) discharge_rate  #Charge lost in 1 second while dischrarging
+ 	var(rate) charge_rate  #Charge gained in 1 second while charging
+	var(100%) max_charge  #storage capacity of UPS(100 if in percentage)
+	var(time) frame  #time in ms after which everything gets updated
+
+#Variables
+	var(string/int) status #charging, discharging, full, below_margin
+	var(percentage) charge #value representing how much charge is there(approx). calculated using time.
+
+#Functions
+	void function set_status(status){  #set status
+		this.status = status
+	}
+
+	boolean function update_status( charge, status){  #update staus and return true if continue updating(i.e if charge not full or less than marginal charge)
+		if check_charge_less_than_marginal(){
+			set_status('below_margin')
+			return false
+		}
+		else if check_charge_full(){
+			set_status('full')
+			update_charge( charge, status)
+			return true
+		}
+		else{
+			update_charge( charge, status)
+			return false
+		}
+	}
+
+	void function update_charge(charge, status){  #update charge
+		this.charge = calculate_charge(charge, status)
+	}
+
+	percentage function calculate_charge(charge, status){  #update value of charge
+		if status = 'discharging'{
+			return charge - discharge_rate
+		}
+		else if status = 'charging'{
+			return charge + charge_rate
+		}
+		else if status = 'full'{
+			return max_charge
+		}
+		else{
+			#Throw Error: Undefined Status
+		}
+	}
+
+	boolean function check_charge_less_than_margin(){  #check wether charge less than margin or not
+		return charge <= marginal_charge
+	}
+
+	boolean function check_charge_full(){	#check whether charge is full
+		return charge >= max_charge
+	}
+
+#Events
+	event on_power_cut{  #when power goes
+		set_status('discharing')
+		log('power cut',time)  #log time when power cut happened
+	}
+
+	event on_power_back_on{  #when power comes back
+		set_status('charging')
+		log('power back online',time)  #log time when power came back online
+	}
+
+#LOOP
+	initialize(){
+		#get constants from config
+		#get last value of charge
+		#set status to charging
+		log('turn on',time)
+	}
+
+	update(){
+		power_status = listen(port)
+		if power_status = 'power_back_online'{
+			on_power_back_on()
+		}
+		else if power_status = 'power_cut'{
+			on_power_cut()
+		}else{
+			#Throw Error: Network Data not recognizable
+		}
+		if update_status(charge, status){
+			update_charge(charge, status)
+		}
+		else{
+			execute_shutdown()
+		}
+	}
+
+	start(){  #execute on start
+		initialize()
+		repeat(update(),frame)  #repeat update every frame
+	}
+
+	stop(){
+		if check_charge_less_than_margin(){  #check again if shutdown needs to happen
+			execute_shutdown()
+		}
+		else{
+			#Throw Error: Reached stopped without satisfying condition
+		}
+	}
+#SYSTEM
+	log(msg, time){
+		log_msg = msg + 'at' + time
+		write(log_msg,log_file)
+	}
+
+	execute_shutdown(){
+		log('shutdown',time)
+		`shutdown`
+	}
+
+	listen(port){
+		ping_data = #listen on port for ping from rasberry pi to know whether light went out or lights came back
+		power_status = parse(ping_data)
+		return power_status
+	}
+}
